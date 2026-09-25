@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ДПС Уссурийск</title>
+    <script src="https://telegram.org"></script>
+    <script src="https://unpkg.com"></script>
+    <style>
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        html, body { margin: 0; padding: 0; height: 100%; background-color: #121212; color: #fff; overflow: hidden; }
+        
+        /* Контейнер для перемещения по карте */
+        #map-scroll-box { 
+            width: 100%; 
+            height: calc(100% - 70px); 
+            position: relative; 
+            overflow: auto; 
+            background: #121212;
+        }
+
+        /* Настоящая подробная подложка карты Уссурийска (высокое качество) */
+        #real-map-canvas {
+            width: 1600px; 
+            height: 1600px;
+            background-image: url('https://yandex.ru');
+            background-size: 1600px 1600px; /* Растягиваем для четкости улиц */
+            position: relative;
+        }
+
+        /* Светящаяся красная метка ДПС */
+        .dps-marker {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            background-color: #ff3b30;
+            border: 3px solid #fff;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 12px #ff3b30;
+            animation: pulse-anim 1.5s infinite;
+            cursor: pointer;
+            z-index: 10;
+        }
+
+        @keyframes pulse-anim {
+            0% { transform: translate(-50%, -50%) scale(0.9); box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7); }
+            70% { transform: translate(-50%, -50%) scale(1.1); box-shadow: 0 0 0 10px rgba(255, 59, 48, 0); }
+            100% { transform: translate(-50%, -50%) scale(0.9); box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); }
+        }
+
+        /* Нижняя серая панель с кнопкой */
+        .bottom-bar { 
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 70px; 
+            background-color: #1e1e1e; display: flex; align-items: center; 
+            justify-content: center; padding: 10px; border-top: 1px solid #2d2d2d; z-index: 1000; 
+        }
+        .btn-action { 
+            width: 100%; height: 50px; background-color: #333333; color: #ffffff; 
+            border: none; border-radius: 12px; font-size: 16px; font-weight: bold; cursor: pointer; 
+        }
+        .btn-action:active { background-color: #444444; }
+        .btn-action.active { background-color: #ff3b30; }
+    </style>
+</head>
+<body>
+
+    <div id="map-scroll-box">
+        <div id="real-map-canvas"></div>
+    </div>
+    
+    <div class="bottom-bar">
+        <button id="action-btn" class="btn-action">Поставить метку на карту</button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp; 
+        if (tg) { tg.expand(); tg.ready(); }
+
+        // Твоя база данных Supabase для сохранения точек
+        const SUPABASE_URL = "https://supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_aOP-PtwS2AXySDLBtdILWg_dnXAoqyA";
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        const mapCanvas = document.getElementById('real-map-canvas');
+        const actionBtn = document.getElementById('action-btn');
+        let isAddingMode = false;
+
+        // Сразу центрируем обзор на середину Уссурийска (район Некрасова / Чичерина)
+        document.getElementById('map-scroll-box').scrollLeft = 450;
+        document.getElementById('map-scroll-box').scrollTop = 450;
+
+        // Загрузка меток из базы
+        async function loadMarkers() {
+            const { data, error } = await supabase.from('markers').select('*');
+            if (error) return;
+
+            // Стираем старые перед обновлением экрана
+            document.querySelectorAll('.dps-marker').forEach(m => m.remove());
+
+            // Рисуем актуальные метки
+            data.forEach(item => {
+                drawMarkerOnCanvas(item.lat, item.lng, item.comment);
+            });
+        }
+
+        function drawMarkerOnCanvas(x, y, comment) {
+            const marker = document.createElement('div');
+            marker.className = 'dps-marker';
+            marker.style.left = x + 'px';
+            marker.style.top = y + 'px';
+            
+            // Нажатие на точку показывает комментарий водителя
+            marker.addEventListener('click', (e) => {
+                e.stopPropagation();
+                alert("🚨 Сообщение от водителя:\n\n" + (comment || "Пост ДПС (без описания)"));
+            });
+
+            mapCanvas.appendChild(marker);
+        }
+
+        // Логика работы нижней кнопки
+        actionBtn.addEventListener('click', () => {
+            if (!isAddingMode) {
+                isAddingMode = true;
+                actionBtn.textContent = 'Ткни в место на карте, где стоят ДПС...';
+                actionBtn.classList.add('active');
+            } else {
+                resetMode();
+            }
+        });
+
+        function resetMode() {
+            isAddingMode = false;
+            actionBtn.textContent = 'Поставить метку на карту';
+            actionBtn.classList.remove('active');
+        }
+
+        // Логика клика по карте города
+        mapCanvas.addEventListener('click', async (e) => {
+            if (!isAddingMode) return;
+
+            const rect = mapCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const comment = prompt("Добавьте комментарий (например: 'Тормозят всех на переезде', 'Стоят на комсомольской'):");
+            
+            if (comment !== null) {
+                // Пишем пиксельные координаты в Supabase
+                const { error } = await supabase.from('markers').insert([{ lat: x, lng: y, comment: comment }]);
+                
+                if (!error) {
+                    drawMarkerOnCanvas(x, y, comment);
+                } else {
+                    alert('Ошибка сохранения в базу данных');
+                }
+            }
+            resetMode();
+        });
+
+        loadMarkers();
+        setInterval(loadMarkers, 15000); // Обновляем метки от других людей каждые 15 секунд
+    </script>
+</body>
+</html>
