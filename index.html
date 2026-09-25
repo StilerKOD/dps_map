@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ДПС Уссурийск</title>
+    <!-- Подключаем Telegram Web Apps -->
+    <script src="https://telegram.org"></script>
+    <!-- Подключаем Яндекс Карты (работают в РФ без VPN) -->
+    <script src="https://yandex.ru" type="text/javascript"></script>
+    <!-- Подключаем Supabase -->
+    <script src="https://unpkg.com"></script>
+
+    <style>
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        html, body { margin: 0; padding: 0; height: 100%; background-color: #121212; color: #fff; overflow: hidden; }
+        
+        #map { width: 100%; height: calc(100% - 70px); background: #121212; }
+        
+        /* Делаем карту Яндекса стильной и темной */
+        .ymaps-2-1-79-map { filter: invert(90%) hue-rotate(180deg) brightness(95%) contrast(90%); }
+
+        /* Нижняя панель с серой кнопкой */
+        .bottom-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 70px;
+            background-color: #1e1e1e;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px;
+            border-top: 1px solid #2d2d2d;
+            z-index: 1000;
+        }
+
+        .btn-action {
+            width: 100%;
+            height: 50px;
+            background-color: #333333;
+            color: #ffffff;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn-action:active { background-color: #444444; }
+        .btn-action.active { background-color: #ff3b30; }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+    
+    <div class="bottom-bar">
+        <button id="action-btn" class="btn-action">Поставить метку на карту</button>
+    </div>
+
+    <script>
+        // Инициализация Telegram
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        // Ваши данные Supabase
+        const SUPABASE_URL = "https://supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_aOP-PtwS2AXySDLBtdILWg_dnXAoqyA";
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        let myMap;
+        let isAddingMode = false;
+        const actionBtn = document.getElementById('action-btn');
+
+        // Запуск Яндекс Карт
+        ymaps.ready(init);
+        function init() {
+            // Центр на Уссурийск
+            myMap = new ymaps.Map("map", {
+                center: [43.7997, 131.9542], 
+                zoom: 13,
+                controls: [] // убираем лишние кнопки с карты
+            });
+
+            // Загружаем метки из базы
+            loadMarkers();
+
+            // Клик по карте для установки метки
+            myMap.events.add('click', async function (e) {
+                if (!isAddingMode) return;
+
+                const coords = e.get('coords'); // [lat, lng]
+                const lat = coords[0];
+                const lng = coords[1];
+                
+                const comment = prompt("Добавьте комментарий к метке ДПС:");
+                
+                if (comment !== null) {
+                    // Сохраняем в Supabase
+                    const { error } = await supabase.from('markers').insert([{ lat, lng, comment }]);
+                    
+                    if (!error) {
+                        // Сразу рисуем её на экране
+                        addPlacemarkToMap(lat, lng, comment);
+                    } else {
+                        alert('Ошибка сохранения в базу');
+                    }
+                }
+                resetMode();
+            });
+        }
+
+        // Функция добавления значка на карту
+        function addPlacemarkToMap(lat, lng, comment) {
+            const myPlacemark = new ymaps.Placemark([lat, lng], {
+                balloonContent: `<b>Пост ДПС</b><br>${comment || "Без комментария"}`
+            }, {
+                preset: 'islands#redCircleDotIcon' // Красная круглая метка
+            });
+            myMap.geoObjects.add(myPlacemark);
+        }
+
+        // Загрузка всех меток из Supabase
+        async function loadMarkers() {
+            const { data, error } = await supabase.from('markers').select('*');
+            if (error || !myMap) return;
+
+            // Очищаем старые метки на карте перед обновлением
+            myMap.geoObjects.removeAll();
+
+            // Рисуем метки из базы
+            data.forEach(item => {
+                addPlacemarkToMap(item.lat, item.lng, item.comment);
+            });
+        }
+
+        // Логика кнопки снизу
+        actionBtn.addEventListener('click', () => {
+            if (!isAddingMode) {
+                isAddingMode = true;
+                actionBtn.textContent = 'Кликните на место на карте...';
+                actionBtn.classList.add('active');
+            } else {
+                resetMode();
+            }
+        });
+
+        function resetMode() {
+            isAddingMode = false;
+            actionBtn.textContent = 'Поставить метку на карту';
+            actionBtn.classList.remove('active');
+        }
+
+        // Автообновление меток каждые 30 секунд
+        setInterval(loadMarkers, 30000);
+    </script>
+</body>
+</html>
