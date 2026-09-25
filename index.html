@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ДПС Уссурийск</title>
+    <!-- Подключаем Telegram Web Apps -->
+    <script src="https://telegram.org"></script>
+    <!-- Официальный скрипт Яндекс Карт (работает в РФ идеально) -->
+    <script src="https://yandex.ru" type="text/javascript"></script>
+    <!-- Подключаем Supabase -->
+    <script src="https://unpkg.com"></script>
+
+    <style>
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        html, body { margin: 0; padding: 0; height: 100%; background-color: #1a1a1a; color: #fff; overflow: hidden; }
+        
+        #map { width: 100%; height: calc(100% - 70px); background: #1a1a1a; }
+
+        /* Никаких опасных фильтров инверсии. Чистый CSS для нижней панели */
+        .bottom-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 70px;
+            background-color: #242424;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px;
+            border-top: 1px solid #333;
+            z-index: 1000;
+        }
+
+        .btn-action {
+            width: 100%;
+            height: 50px;
+            background-color: #3a3a3a;
+            color: #ffffff;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .btn-action:active { background-color: #4a4a4a; }
+        .btn-action.active { background-color: #d9383a; }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+    
+    <div class="bottom-bar">
+        <button id="action-btn" class="btn-action">Поставить метку на карту</button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        if (tg) { tg.expand(); tg.ready(); }
+
+        // Ваша рабочая база Supabase
+        const SUPABASE_URL = "https://supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_aOP-PtwS2AXySDLBtdILWg_dnXAoqyA";
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        let myMap;
+        let isAddingMode = false;
+        const actionBtn = document.getElementById('action-btn');
+
+        ymaps.ready(init);
+        function init() {
+            // Создаем карту и принудительно включаем официальный ПОЛУНОЧНЫЙ (темный) стиль Яндекса
+            myMap = new ymaps.Map("map", {
+                center: [43.7997, 131.9542], 
+                zoom: 13,
+                controls: ['zoomControl']
+            }, {
+                // Включаем темную тему слоя через официальный провайдер
+                yandexMapDisablePoiInteractivity: true
+            });
+
+            // Устанавливаем встроенный темный тип подложки
+            myMap.setType('yandex#dark');
+
+            // Загружаем метки из базы
+            loadMarkers();
+
+            // Логика клика по карте
+            myMap.events.add('click', async function (e) {
+                if (!isAddingMode) return;
+
+                const coords = e.get('coords');
+                const lat = coords[0];
+                const lng = coords[1];
+                
+                const comment = prompt("Добавьте комментарий к метке ДПС:");
+                
+                if (comment !== null) {
+                    const { error } = await supabase.from('markers').insert([{ lat, lng, comment }]);
+                    if (!error) {
+                        addPlacemarkToMap(lat, lng, comment);
+                    } else {
+                        alert('Ошибка сохранения');
+                    }
+                }
+                resetMode();
+            });
+        }
+
+        function addPlacemarkToMap(lat, lng, comment) {
+            const myPlacemark = new ymaps.Placemark([lat, lng], {
+                balloonContent: `<b>Пост ДПС</b><br>${comment || "Без комментария"}`
+            }, {
+                preset: 'islands#redCircleDotIcon'
+            });
+            myMap.geoObjects.add(myPlacemark);
+        }
+
+        async function loadMarkers() {
+            const { data, error } = await supabase.from('markers').select('*');
+            if (error || !myMap) return;
+
+            myMap.geoObjects.removeAll();
+            data.forEach(item => {
+                addPlacemarkToMap(item.lat, item.lng, item.comment);
+            });
+        }
+
+        actionBtn.addEventListener('click', () => {
+            if (!isAddingMode) {
+                isAddingMode = true;
+                actionBtn.textContent = 'Кликните на место на карте...';
+                actionBtn.classList.add('active');
+            } else {
+                resetMode();
+            }
+        });
+
+        function resetMode() {
+            isAddingMode = false;
+            actionBtn.textContent = 'Поставить метку на карту';
+            actionBtn.classList.remove('active');
+        }
+
+        setInterval(loadMarkers, 20000);
+    </script>
+</body>
+</html>
